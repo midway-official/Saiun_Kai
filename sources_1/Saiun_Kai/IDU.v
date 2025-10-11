@@ -1,7 +1,8 @@
 module IDU(
     input  wire         clk,
     input  wire         rst,
-    
+    input  wire          stall,
+    input  wire          nop,
     // 来自IFU的输入
     input  wire [127:0] inst_package_i,     // 指令包
     input  wire         package_valid_i,    // 指令包有效
@@ -60,27 +61,59 @@ module IDU(
     output wire         inst2_is_b_o,                 // B指令
     output wire         inst2_is_bl_o                 // BL指令
 );
+wire [63:0] cnt;
+counter64 counter64(
+.clk(clk),
+.rst(rst),
+.count(cnt)
+
+);
+// ---- ID 级寄存器：寄存 IF 发来的包（采样点） ----
+reg [127:0] inst_package_r;
+reg         package_valid_r;
+
+always @(posedge clk or posedge rst) begin
+    if (rst) begin
+        inst_package_r  <= 128'b0;
+        package_valid_r <= 1'b0;
+    end else begin
+        if (nop) begin
+            // nop 优先：插入气泡
+            inst_package_r  <= 128'b0;
+            package_valid_r <= 1'b0;
+        end else if (stall) begin
+            // stall：冻结
+            inst_package_r  <= inst_package_r;
+            package_valid_r <= package_valid_r;
+        end else begin
+            // 正常采样
+            inst_package_r  <= inst_package_i;
+            package_valid_r <= package_valid_i;
+        end
+    end
+end
 
 // 解析指令包
-wire [31:0] if1_pc              = inst_package_i[127:96];
-wire [31:0] if1_inst1           = inst_package_i[95:64];
-wire [31:0] if1_inst2           = inst_package_i[63:32];
-wire        if1_inst1_valid     = inst_package_i[31];
-wire        if1_inst2_valid     = inst_package_i[30];
-wire        inst1_is_branch     = inst_package_i[29];
-wire        inst1_pred_taken    = inst_package_i[28];
-wire        inst2_is_branch     = inst_package_i[27];
-wire        inst2_pred_taken    = inst_package_i[26];
+wire [31:0] if1_pc              = inst_package_r [127:96];
+wire [31:0] if1_inst1           = inst_package_r [95:64];
+wire [31:0] if1_inst2           =inst_package_r [63:32];
+wire        if1_inst1_valid     = inst_package_r [31];
+wire        if1_inst2_valid     =inst_package_r [30];
+wire        inst1_is_branch     =inst_package_r [29];
+wire        inst1_pred_taken    =inst_package_r [28];
+wire        inst2_is_branch     =inst_package_r [27];
+wire        inst2_pred_taken    = inst_package_r [26];
 
 // 指令有效信号
-assign inst1_valid_o = package_valid_i & if1_inst1_valid;
-assign inst2_valid_o = package_valid_i & if1_inst2_valid;
+assign inst1_valid_o = package_valid_r & if1_inst1_valid&!stall;
+assign inst2_valid_o = package_valid_r & if1_inst2_valid&!stall;
 
 // 指令1译码
 wire [31:0] inst1 = if1_inst1;
 dual_inst_decoder u_inst1_decoder(
     .inst               (inst1),
     .pc                 (if1_pc),
+    .cnt                  (cnt),
     .alu_op             (inst1_alu_op_o),
     .imm                (inst1_imm_o),
     .br_offs            (inst1_br_offs_o),
@@ -110,6 +143,7 @@ wire [31:0] inst2_pc = if1_pc + 4; // 第二条指令的PC
 dual_inst_decoder u_inst2_decoder(
     .inst               (inst2),
     .pc                 (inst2_pc),
+    .cnt                  (cnt),
     .alu_op             (inst2_alu_op_o),
     .imm                (inst2_imm_o),
     .br_offs            (inst2_br_offs_o),
@@ -145,8 +179,10 @@ endmodule
 
 // 单条指令译码器模块
 module dual_inst_decoder(
+   
     input  wire [31:0]  inst,
     input  wire [31:0]  pc,
+    input   wire [63:0]  cnt,
     output wire [15:0]  alu_op,
     output wire [31:0]  imm,
     output wire [31:0]  br_offs,
@@ -229,13 +265,18 @@ wire  inst_pcaddu12i = op_31_26_d[6'h07] & ~inst[25];
 wire inst_mul_w = op_31_26_d[6'h00] & op_25_22_d[4'h0]
                   & op_21_20_d[2'h1] & op_19_15_d[5'h18];
                   
+
+                  
 // 新增立即数逻辑指令译码
 wire inst_andi  = op_31_26_d[6'h00] & op_25_22_d[4'hd];
 wire inst_ori   = op_31_26_d[6'h00] & op_25_22_d[4'he];
 wire inst_xori  = op_31_26_d[6'h00] & op_25_22_d[4'hf];
+wire inst_RDCNTVL_W = (inst[31:15] == 17'b0) & (inst[14:10] == 5'b11000);
+wire inst_RDCNTVH_W = (inst[31:15] == 17'b0) & (inst[14:10] == 5'b11001);
+
 // ALU操作选择
 assign alu_op[0] = inst_add_w | inst_addi_w | inst_ld_w | inst_st_w | inst_jirl | inst_bl |
-                   inst_ll_w | inst_sc_w | inst_ld_b | inst_st_b| inst_pcaddu12i;  // 加法运算
+                   inst_ll_w | inst_sc_w | inst_ld_b | inst_st_b| inst_pcaddu12i|inst_RDCNTVL_W|inst_RDCNTVH_W;  // 加法运算
 assign alu_op[1] = inst_sub_w;                                      // 减法运算
 assign alu_op[2] = inst_slt;                                        // 有符号比较
 assign alu_op[3] = inst_sltu;                                       // 无符号比较
@@ -259,14 +300,18 @@ wire need_si14  = inst_ll_w | inst_sc_w;
 wire need_si16  = inst_beq | inst_bne;
 wire need_si20  = inst_lu12i_w | inst_pcaddu12i;
 wire need_si26  = inst_b | inst_bl;
-
+wire need_cnt_L = inst_RDCNTVL_W;
+wire need_cnt_H  = inst_RDCNTVH_W;
 wire src2_is_4 =    inst_bl;
 
 // 立即数计算
 
 
 
-assign imm = src2_is_4 ? 32'h4 :
+assign imm =  
+             need_cnt_L ? cnt[31:0] :
+             need_cnt_H ? cnt[63:32] :
+             src2_is_4 ? 32'h4 :
              need_si20 ? {i20[19:0], 12'b0} :
              need_si14 ? {{18{i14[13]}}, i14[13:0]} :
              need_ui12 ? {20'b0, i12[11:0]} :   // 无符号扩展
@@ -291,7 +336,7 @@ assign src1_is_pc    =  inst_bl | inst_pcaddu12i;
 assign src2_is_imm = inst_slli_w | inst_srli_w | inst_srai_w | inst_addi_w |
                      inst_ld_w | inst_st_w | inst_lu12i_w | inst_jirl | inst_bl |
                      inst_ll_w | inst_sc_w | inst_ld_b | inst_st_b | inst_pcaddu12i |
-                     inst_andi | inst_ori | inst_xori;
+                     inst_andi | inst_ori | inst_xori|inst_RDCNTVL_W|inst_RDCNTVH_W;
 
 assign res_from_mem  = inst_ld_w | inst_ld_b|inst_ll_w ;
 assign dst_is_r1     = inst_bl;
@@ -368,5 +413,19 @@ genvar i;
 generate for (i=0; i<64; i=i+1) begin : gen_for_dec_6_64
     assign out[i] = (in == i);
 end endgenerate
+
+endmodule
+module counter64 (
+    input  wire clk,   // 时钟信号
+    input  wire rst,   // 异步复位，高电平有效
+    output reg  [63:0] count  // 64位计数输出
+);
+
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            count <= 64'd0;              // 复位清零
+        else
+            count <= count + 64'd1;      // 每个时钟周期加1，自动回绕
+    end
 
 endmodule

@@ -10,12 +10,12 @@ module sync_fifo(
     output                  o_buf_almost_full
 );
     // FIFO参数定义
-    parameter DEPTH =4;
-    parameter ADDR_WIDTH = 2;  // log2(DEPTH)
+    parameter DEPTH =128;
+    parameter ADDR_WIDTH = 7;  // log2(DEPTH)
     parameter ALMOST_FULL_MARGIN = 1;  // 剩余几个空位时拉高 almost_full
 
     // 内部信号
-    reg [361:0] fifo_mem [0:DEPTH-1];
+   (* ram_style = "block" *) reg [361:0] fifo_mem [0:DEPTH-1];
     reg [ADDR_WIDTH:0] wr_ptr;  
     reg [ADDR_WIDTH:0] rd_ptr;  
     
@@ -56,13 +56,9 @@ module sync_fifo(
     end
 
     // 写FIFO
-    integer i;
+    
     always @(posedge i_clk) begin
-        if (i_rst) begin
-            for (i = 0; i < DEPTH; i = i + 1) begin
-                fifo_mem[i] <= {362{1'b0}};
-            end
-        end else if (i_w_en ) begin
+       if (i_w_en ) begin
             fifo_mem[wr_ptr[ADDR_WIDTH-1:0]] <= i_data;
         end
     end

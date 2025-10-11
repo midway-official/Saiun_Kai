@@ -84,7 +84,7 @@ reg         icache_ce;
 reg         pc_stall;
 
 // 例化Icache模块
-Icache u_Icache (
+Icache  u_Icache (
     .clk            (clk),
     .rst            (rst),
    .branch      (branch_flag_i),
@@ -140,98 +140,87 @@ always @(posedge clk) begin
         if1_state <= if1_next_state;
     end
 end
-
 // IF1状态机组合逻辑
 always @(*) begin
-    
+    // 默认值，防止 latch
+    if1_next_state = IF1_IDLE;
+    icache_addr = pc_reg;
+    icache_ce = 1'b0;
+    fetch_addr_o = 32'b0;
+    fetch_enable = 1'b0;
+    pc_stall = 1'b0;
     
     case (if1_state)
         IF1_IDLE: begin
             icache_addr = pc_reg;
             icache_ce = 1'b1;
             if (icache_hit1 && icache_hit2) begin
-                // 两条都命中，不取指，数据有效传递给分支预测器
                 if1_next_state = IF1_IDLE;
                 fetch_addr_o = 32'b0;
                 fetch_enable = 1'b0;
-                pc_stall = 0;
+                pc_stall = 1'b0;
             end else if (!icache_hit1) begin
-                // 第一条指令未命中，取第一条指令
                 if1_next_state = IF1_FETCH_INST1;
                 icache_ce = 1'b0;
                 fetch_addr_o = 32'b0;
                 fetch_enable = 1'b0;
-                pc_stall = 1;
+                pc_stall = 1'b1;
             end else if (!icache_hit2) begin
-                // 第二条指令未命中，取第二条指令
                 if1_next_state = IF1_FETCH_INST2;
                 icache_ce = 1'b0;
                 fetch_addr_o = 32'b0;
                 fetch_enable = 1'b0;
-                pc_stall = 1;
-            end else  begin 
-             
-             end 
+                pc_stall = 1'b1;
+            end else begin 
+                // 补充默认情况（理论上不会到达）
+                if1_next_state = IF1_IDLE;
+                pc_stall = 1'b0;
+            end 
         end
         
         IF1_FETCH_INST1: begin
-            // 取第一条指令状态，等待icache_active信号
-            
             if (icache_active) begin
-                // 访存完成，返回初始状态
                 if1_next_state = IF1_IDLE;
-                icache_addr = pc_reg;
-                icache_ce = 1'b1;
-                fetch_addr_o = pc_reg;
-                fetch_enable = 1'b1;
-                pc_stall = `Stop;
             end else begin
-                // 继续等待访存完成
                 if1_next_state = IF1_FETCH_INST1;
-                icache_addr = pc_reg;
-                icache_ce = 1'b1;
-                fetch_addr_o = pc_reg;
-                fetch_enable = 1'b1;
-                pc_stall = `Stop;
             end
+            icache_addr = pc_reg;
+            icache_ce = 1'b1;
+            fetch_addr_o = pc_reg;
+            fetch_enable = 1'b1;
+            pc_stall = 1'b1;
         end
         
         IF1_FETCH_INST2: begin
-            // 取第二条指令状态，等待icache_active信号
             if (icache_active) begin
-                // 访存完成，返回初始状态
                 if1_next_state = IF1_IDLE;
-                icache_addr = pc_plus4;
-                icache_ce = 1'b1;
-                fetch_addr_o = pc_plus4;
-                fetch_enable = 1'b1;
-                pc_stall = `Stop;
             end else begin
-                // 继续等待访存完成
                 if1_next_state = IF1_FETCH_INST2;
-                icache_addr = pc_plus4;
-                icache_ce = 1'b1;
-                fetch_addr_o = pc_plus4;
-                fetch_enable = 1'b1;
-                pc_stall = `Stop;
             end
+            icache_addr = pc_plus4;
+            icache_ce = 1'b1;
+            fetch_addr_o = pc_plus4;
+            fetch_enable = 1'b1;
+            pc_stall = 1'b1;
         end
         
         default: begin
             if1_next_state = IF1_IDLE;
+            icache_addr = pc_reg;
             icache_ce = 1'b0;
-            pc_stall = `Stop;
+            fetch_addr_o = 32'b0;
+            fetch_enable = 1'b0;
+            pc_stall = 1'b1;
         end
     endcase
     
-    // 分支跳转时立即重置
-    if (branch_flag_i == `Branch|inst1_pred_taken|inst2_pred_taken) begin
+    // 分支跳转时立即重置（注意运算符优先级）
+    if ((branch_flag_i == `Branch) || inst1_pred_taken || inst2_pred_taken) begin
         if1_next_state = IF1_IDLE;
         icache_ce = 1'b0;
-        pc_stall = `NoStop;
+        pc_stall = 1'b0;
     end
 end
-
 // IF1级寄存器更新（唯一的寄存器级）
 always @(posedge clk) begin
     if (rst == `RstEnable) begin

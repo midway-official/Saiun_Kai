@@ -1,6 +1,4 @@
 
-`define SerialState 32'hBFD003FC    
-`define SerialData  32'hBFD003F8    
 /*定义常用的常量*/
 `define     PC_START_ADDR   32'h80000000    // PC起始地址
 
@@ -47,11 +45,18 @@ module Icache(
     input wire [31:0] inst_i
 );
 
+////////////////////////////////////////////////////////
+//// -------- Cache 参数配置：128 行，512B -------- //
+//parameter Cache_Num    = 128;
+//parameter Cache_Index  = 7;
+//parameter Block_Offset = 2;
+//parameter Tag          = 32 - Cache_Index - Block_Offset; 
+////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////
-// -------- Cache 参数配置：128 行，512B -------- //
-parameter Cache_Num    = 128;
-parameter Cache_Index  = 7;
-parameter Block_Offset = 2;
+// -------- Cache 参数配置：32 行，128B -------- //
+parameter Cache_Num    = 32;    // 32 行
+parameter Cache_Index  = 5;     // log2(32)
+parameter Block_Offset = 2;     // 每行 4B
 parameter Tag          = 32 - Cache_Index - Block_Offset; 
 //////////////////////////////////////////////////////
 
@@ -207,3 +212,5 @@ always @(*) begin
 end
 
 endmodule
+
+

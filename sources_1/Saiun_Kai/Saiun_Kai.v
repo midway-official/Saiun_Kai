@@ -62,13 +62,13 @@ module Saiun_Kai(
     wire       backend_stall;
     // IFU暂停条件：外部暂停 || 访存仲裁前端暂停 || IQ队列满
     wire ifu_stall = EXTI || front_stall || iq_is_full;
-    
+    wire idu_stall = EXTI || front_stall || iq_is_full;
     // ISU暂停条件：外部暂停 || load-use冒险 || 访存暂停
     wire isu_stall = EXTI || load_use_hazard || fu1_mem_stall||backend_stall;
     
     // ISU复位条件：分支跳转时需要复位ISU
     wire isu_reset = rst || branch_taken ;
-
+     wire idu_nop =  branch_taken;
     /* ================== IFU 实例化 ================== */
     wire [31:0] fetch_addr;
     wire        fetch_enable;
@@ -147,7 +147,8 @@ module Saiun_Kai(
     IDU u_idu (
         .clk(clk),
         .rst(rst),
-        
+        .stall(idu_stall),
+        .nop(idu_nop),
         // 来自IFU的输入
         .inst_package_i(inst_package),
         .package_valid_i(package_valid),

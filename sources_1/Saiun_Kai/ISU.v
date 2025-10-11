@@ -271,18 +271,18 @@ localparam S_IDLE   = 2'b00;  // ³õÌ¬
 localparam S_ISSUE2 = 2'b01;  // µ¥¶À·¢ÉäÖ¸Áî2
 
 reg [1:0] state, next_state;
-reg valid_r;
-reg valid_r_mem;
+
+
 // ×´Ì¬¼Ä´æÆ÷
 always @(posedge clk or posedge rst) begin
     if (rst) begin
         state <= S_IDLE;
-        valid_r<=0;
+        
         end
     else if (!(stall)) 
         begin
         state <= next_state;
-        valid_r<= iq_valid;
+       
         end
 end
 // ---------------- ×´Ì¬×ªÒÆÂß¼­ ----------------
