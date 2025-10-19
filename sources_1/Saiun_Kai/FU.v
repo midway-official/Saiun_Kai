@@ -7,7 +7,9 @@ module FU (
     output wire ready_o,
     input wire [15:0] alu_op_i,
     input wire [31:0] src1_data_i,
+    input wire [3:0] src1_i,
     input wire [31:0] src2_data_i,
+    input wire [3:0] src2_i,
     input wire [31:0] mem_wdata_i,
     input wire [31:0] pc_i,
     input wire is_branch_i,
@@ -36,6 +38,10 @@ module FU (
     //loaduse冒险和访存
     output wire ex_is_load,
     output wire mem_stall,
+    input wire [31:0] ex1_r,
+    input wire  [31:0]ex2_r,
+    input wire  [31:0]mem1_r,
+    input wire  [31:0]mem2_r,
     
     
     // 访存接口
@@ -77,6 +83,8 @@ reg is_ex_valid;
 reg [15:0] is_ex_alu_op;
 reg [31:0] is_ex_src1_data;
 reg [31:0] is_ex_src2_data;
+reg [3:0] is_ex_src1;
+reg [3:0] is_ex_src2;
 reg [31:0] is_ex_mem_wdata;
 reg [31:0] is_ex_pc;
 reg is_ex_is_branch;
@@ -101,6 +109,8 @@ always @(posedge clk) begin
         is_ex_alu_op <= 16'b0;
         is_ex_src1_data <= 32'b0;
         is_ex_src2_data <= 32'b0;
+        is_ex_src1 <= 4'b0;
+        is_ex_src2 <= 4'b0;
         is_ex_mem_wdata <= 32'b0;
         is_ex_pc <= 32'b0;
         is_ex_is_branch <= 1'b0;
@@ -124,6 +134,8 @@ always @(posedge clk) begin
         is_ex_alu_op <= 16'b0;
         is_ex_src1_data <= 32'b0;
         is_ex_src2_data <= 32'b0;
+        is_ex_src1 <= 4'b0;
+        is_ex_src2 <= 4'b0;
         is_ex_mem_wdata <= 32'b0;
         is_ex_pc <= 32'b0;
         is_ex_is_branch <= 1'b0;
@@ -147,6 +159,8 @@ always @(posedge clk) begin
         is_ex_alu_op <= alu_op_i;
         is_ex_src1_data <= src1_data_i;
         is_ex_src2_data <= src2_data_i;
+        is_ex_src1 <= src1_i;
+        is_ex_src2<= src2_i;
         is_ex_mem_wdata <= mem_wdata_i;
         is_ex_pc <= pc_i;
         is_ex_is_branch <= is_branch_i;
@@ -174,12 +188,28 @@ end
 wire [31:0] ex_alu_result;
 wire        ex_branch_taken;
 wire [31:0] ex_branch_target;
+wire  [31:0] src1,src2,mem_wdata;
+assign src1 = is_ex_src1[3] ? ex2_r  :
+               is_ex_src1[2] ? ex1_r  :
+               is_ex_src1[1] ? mem2_r :
+               is_ex_src1[0] ? mem1_r :
+                               is_ex_src1_data;
 
+assign src2 = is_ex_src2[3] ? ex2_r  :
+               is_ex_src2[2] ? ex1_r  :
+               is_ex_src2[1] ? mem2_r :
+               is_ex_src2[0] ? mem1_r :
+                               is_ex_src2_data;
+assign mem_wdata =is_ex_src2[3] ? ex2_r  :
+               is_ex_src2[2] ? ex1_r  :
+               is_ex_src2[1] ? mem2_r :
+               is_ex_src2[0] ? mem1_r :
+                               is_ex_mem_wdata;
 // ALU运算逻辑
 alu_unit u_alu (
     .alu_op(is_ex_alu_op),
-    .src1(is_ex_src1_data),
-    .src2(is_ex_src2_data),
+    .src1(src1),
+    .src2(src2),
     .result(ex_alu_result)
 );
 
@@ -193,7 +223,9 @@ branch_unit u_branch (
     .is_bl(is_ex_is_bl),
     .br_offs(is_ex_br_offs),
     .jirl_offs(is_ex_jirl_offs),
-    .alu_result(ex_alu_result),
+    .alu_op(is_ex_alu_op),
+    .src1(src1),
+    .src2(src2),
     .pred_taken(is_ex_pred_taken),
     .branch_taken(ex_branch_taken),
     .branch_target(ex_branch_target)
@@ -230,7 +262,8 @@ mem_ctrl_unit u_mem_ctrl_unit (
 reg ex_mem_valid;
 reg [31:0] ex_mem_alu_result;
 reg [31:0] ex_mem_pc;          // 程序计数器（用于异常处理等）
-
+reg [31:0] ex_mem_branch_target;         
+reg ex_mem_branch_taken;         
 //寄存器堆写
 reg ex_mem_gr_we;
 reg [4:0] ex_mem_dest;           // 目标寄存器编号
@@ -258,11 +291,13 @@ always @(posedge clk) begin
         ex_mem_gr_we <= 1'b0;
         ex_mem_dest <= 5'b0;
         ex_mem_mem_wdata <= 32'b0;
+        
         ex_mem_mem_sel_n <= 4'b1111;      // 默认不选中任何字节
         ex_mem_mem_we_n <= 1'b1;      // 默认不写
         ex_mem_mem_ce <= 1'b0;        // 默认不片选
         ex_mem_special <= 5'b0;
-
+        ex_mem_branch_target <= 32'b0;
+        ex_mem_branch_taken <= 1'b0;
     end else if (ex_mem_nop) begin
         // nop优先级高于stall，清空流水线寄存器
         ex_mem_valid <= 1'b0;
@@ -277,7 +312,8 @@ always @(posedge clk) begin
         ex_mem_mem_we_n <= 1'b1;
         ex_mem_mem_ce <= 1'b0;
         ex_mem_special <= 5'b0;
-
+        ex_mem_branch_target <= 32'b0;
+        ex_mem_branch_taken <= 1'b0;
     end else if (!ex_mem_stall) begin
         // 正常流水
         ex_mem_valid <= is_ex_valid;
@@ -287,11 +323,13 @@ always @(posedge clk) begin
         ex_mem_pc <= is_ex_pc;
         ex_mem_gr_we <= is_ex_gr_we;
         ex_mem_dest <= is_ex_dest;
-        ex_mem_mem_wdata <= is_ex_mem_wdata;
+        ex_mem_mem_wdata <= mem_wdata;
         ex_mem_mem_sel_n <= ex_mem_sel_n;
         ex_mem_mem_we_n <= ex_mem_we_n;
         ex_mem_mem_ce <= ex_mem_ce_o;
         ex_mem_special <= is_ex_special;
+        ex_mem_branch_target <= ex_branch_target;
+        ex_mem_branch_taken <=  ex_branch_taken;
     end
     // stall时保持原值不变
 end
@@ -367,11 +405,11 @@ wire [31:0] mem_wdata_pre = (ex_mem_jirl&&mem_dest_o!=5'b0)       ? ex_mem_jirl_
                             mem_res_from_mem ? mem_result        :
                                                ex_mem_alu_result;
 // LL/SC 特殊处理
-wire [31:0] mem_wdata = (ex_mem_special == 5'd2) ? {31'b0, mem_sc_success} :// SC 成功与否
+assign mem_wdata_o = (ex_mem_special == 5'd2) ? {31'b0, mem_sc_success} :// SC 成功与否
                       mem_wdata_pre;
 assign mem_dest_o=ex_mem_dest;
 assign mem_gr_we_o=ex_mem_gr_we;
-assign mem_wdata_o=mem_wdata;
+
 // ============================================================================
 // MEM_WB 流水线寄存器
 // ============================================================================
@@ -395,7 +433,7 @@ always @(posedge clk) begin
     end else if (!mem_wb_stall) begin
         mem_wb_valid <= ex_mem_valid;
         mem_wb_gr_we <= ex_mem_gr_we;
-        mem_wb_wdata <= mem_wdata;
+        mem_wb_wdata <= mem_wdata_o;
         mem_wb_dest <= ex_mem_dest;
     end
 end
@@ -410,8 +448,8 @@ assign wb_data_o = mem_wb_wdata;
 // ============================================================================
 // 分支跳转输出
 // ============================================================================
-assign branch_taken_o = ex_branch_taken ;
-assign branch_target_o = ex_branch_target;
+assign branch_taken_o = ex_mem_branch_taken ;
+assign branch_target_o = ex_mem_branch_target;
 
 
 endmodule
@@ -425,11 +463,16 @@ module FU_R (
     input  wire         valid_i,
      output  wire        ready_o,
     input  wire [15:0]  alu_op_i,
-    input  wire [31:0]  src1_data_i,
-    input  wire [31:0]  src2_data_i,
+    input wire [31:0] src1_data_i,
+    input wire [3:0] src1_i,
+    input wire [31:0] src2_data_i,
+    input wire [3:0] src2_i,
     input  wire [4:0]   dest_i,
     input  wire         gr_we_i,
-
+    input wire [31:0] ex1_r,
+    input wire  [31:0]ex2_r,
+    input wire  [31:0]mem1_r,
+    input wire  [31:0]mem2_r,
     // 流水线控制信号（保持和原模块一致的接口风格）
     input  wire         is_ex_stall,
     input  wire         is_ex_nop,
@@ -447,7 +490,7 @@ module FU_R (
     output wire [4:0]   mem_dest_o,
     output wire         mem_gr_we_o,
     output wire [31:0]  mem_wdata_o,
-
+     
     // 写回寄存器堆控制信号（WB）
     output wire [4:0]   wb_dest_o,
     output wire         wb_gr_we_o,
@@ -462,7 +505,9 @@ module FU_R (
 reg                 is_ex_valid;
 reg [15:0]          is_ex_alu_op;
 reg [31:0]          is_ex_src1_data;
+reg [3:0]          is_ex_src1;
 reg [31:0]          is_ex_src2_data;
+reg [3:0]          is_ex_src2;
 reg [4:0]           is_ex_dest;
 reg                 is_ex_gr_we;
 
@@ -472,6 +517,8 @@ always @(posedge clk) begin
         is_ex_alu_op     <= 16'b0;
         is_ex_src1_data  <= 32'b0;
         is_ex_src2_data  <= 32'b0;
+        is_ex_src1  <= 4'b0;
+        is_ex_src2  <= 4'b0;
         is_ex_dest       <= 5'b0;
         is_ex_gr_we      <= 1'b0;
     end else if (is_ex_nop) begin
@@ -480,6 +527,8 @@ always @(posedge clk) begin
         is_ex_alu_op     <= 16'b0;
         is_ex_src1_data  <= 32'b0;
         is_ex_src2_data  <= 32'b0;
+        is_ex_src1  <= 4'b0;
+        is_ex_src2  <= 4'b0;
         is_ex_dest       <= 5'b0;
         is_ex_gr_we      <= 1'b0;
     end else if (!is_ex_stall) begin
@@ -488,6 +537,8 @@ always @(posedge clk) begin
         is_ex_alu_op     <= alu_op_i;
         is_ex_src1_data  <= src1_data_i;
         is_ex_src2_data  <= src2_data_i;
+        is_ex_src1  <= src1_i;
+        is_ex_src2  <= src2_i;
         is_ex_dest       <= dest_i;
         is_ex_gr_we      <= gr_we_i;
     end
@@ -497,11 +548,13 @@ end
 // ============================================================================
 // ALU（保持与原来一致的接口）
 wire [31:0] ex_alu_result;
-
+wire [31:0] src1,src2,mem_wdata; 
+assign src1 = is_ex_src1[3] ? ex2_r : is_ex_src1[2] ? ex1_r : is_ex_src1[1] ? mem2_r : is_ex_src1[0] ? mem1_r : is_ex_src1_data;
+assign src2 = is_ex_src2[3] ? ex2_r : is_ex_src2[2] ? ex1_r : is_ex_src2[1] ? mem2_r : is_ex_src2[0] ? mem1_r : is_ex_src2_data;
 alu_unit u_alu (
     .alu_op(is_ex_alu_op),
-    .src1(is_ex_src1_data),
-    .src2(is_ex_src2_data),
+    .src1(src1),
+    .src2(src2),
     .result(ex_alu_result)
 );
 
@@ -580,69 +633,61 @@ endmodule
 
 
 
-
 // ============================================================================
-// ALU运算单元
+// ALU运算单元 - 优化版本（扁平化组合逻辑，改善时序）
 // ============================================================================
 module alu_unit (
     input wire [15:0] alu_op,
     input wire [31:0] src1,
     input wire [31:0] src2,
-    output reg [31:0] result
+    output wire [31:0] result
 );
 
-always @(*) begin
-    // 根据独热编码的alu_op信号进行运算选择
-    if (alu_op[0]) begin
-        // 加法运算: add_w, addi_w, ld_w, st_w, jirl, bl, ll_w, sc_w, ld_b, st_b, pcaddu12i
-        result = src1 + src2;
-    end else if (alu_op[1]) begin
-        // 减法运算: sub_w
-        result = src1 - src2;
-    end else if (alu_op[2]) begin
-        // 有符号比较: slt
-        result = ($signed(src1) < $signed(src2)) ? 32'b1 : 32'b0;
-    end else if (alu_op[3]) begin
-        // 无符号比较: sltu
-        result = (src1 < src2) ? 32'b1 : 32'b0;
-    end else if (alu_op[4]) begin
-        // 与运算: and, andi
-        result = src1 & src2;
-    end else if (alu_op[5]) begin
-        // 或非运算: nor
-        result = ~(src1 | src2);
-    end else if (alu_op[6]) begin
-        // 或运算: or, ori
-        result = src1 | src2;
-    end else if (alu_op[7]) begin
-        // 异或运算: xor, xori
-        result = src1 ^ src2;
-    end else if (alu_op[8]) begin
-        // 逻辑左移: slli_w
-        result = src1 << src2[4:0];
-    end else if (alu_op[9]) begin
-        // 逻辑右移: srli_w
-        result = src1 >> src2[4:0];
-    end else if (alu_op[10]) begin
-        // 算术右移: srai_w
-        result = $signed(src1) >>> src2[4:0];
-    end else if (alu_op[11]) begin
-        // lu12i指令: 将立即数放到高20位，低12位清零
-        result = {src2[19:0], 12'b0};
-    end else if (alu_op[12]) begin
-        // 乘法运算: mul_w
-        result = src1 * src2;
-    end else if (alu_op[13]) begin
-        // 相等比较: beq
-        result = (src1 == src2) ? 32'b1 : 32'b0;
-    end else if (alu_op[14]) begin
-        // 不相等比较: bne
-        result = (src1 != src2) ? 32'b1 : 32'b0;
-    end else begin
-        // 默认全0
-        result = 32'b0;
-    end
-end
+// ============================================================================
+// 中间结果并行计算（一级逻辑）
+// ============================================================================
+wire [31:0] add_result  = src1 + src2;
+wire [31:0] sub_result  = src1 - src2;
+wire [31:0] and_result  = src1 & src2;
+wire [31:0] or_result   = src1 | src2;
+wire [31:0] xor_result  = src1 ^ src2;
+wire [31:0] nor_result  = ~or_result;
+wire [31:0] sll_result  = src1 << src2[4:0];
+wire [31:0] srl_result  = src1 >> src2[4:0];
+wire [31:0] sra_result  = $signed(src1) >>> src2[4:0];
+wire [31:0] lui_result  = {src2[19:0], 12'b0};
+wire [31:0] mul_result  = src1 * src2;
+
+// 比较结果
+wire slt_cond  = $signed(src1) < $signed(src2);
+wire sltu_cond = src1 < src2;
+wire eq_cond   = (src1 == src2);
+wire ne_cond   = (src1 != src2);
+
+wire [31:0] slt_result  = {31'b0, slt_cond};
+wire [31:0] sltu_result = {31'b0, sltu_cond};
+wire [31:0] eq_result   = {31'b0, eq_cond};
+wire [31:0] ne_result   = {31'b0, ne_cond};
+
+// ============================================================================
+// 扁平化多路选择器（二级逻辑）
+// ============================================================================
+// 使用位或归约，避免深层次的if-else嵌套
+assign result = ({32{alu_op[0]}}  & add_result)  |
+                ({32{alu_op[1]}}  & sub_result)  |
+                ({32{alu_op[2]}}  & slt_result)  |
+                ({32{alu_op[3]}}  & sltu_result) |
+                ({32{alu_op[4]}}  & and_result)  |
+                ({32{alu_op[5]}}  & nor_result)  |
+                ({32{alu_op[6]}}  & or_result)   |
+                ({32{alu_op[7]}}  & xor_result)  |
+                ({32{alu_op[8]}}  & sll_result)  |
+                ({32{alu_op[9]}}  & srl_result)  |
+                ({32{alu_op[10]}} & sra_result)  |
+                ({32{alu_op[11]}} & lui_result)  |
+                ({32{alu_op[12]}} & mul_result)  |
+                ({32{alu_op[13]}} & eq_result)   |
+                ({32{alu_op[14]}} & ne_result);
 
 endmodule
 
@@ -658,20 +703,41 @@ module branch_unit (
     input  wire        is_bl,
     input  wire [31:0] br_offs,
     input  wire [31:0] jirl_offs,
-    input  wire [31:0] alu_result,
+    input  wire [15:0] alu_op,
+    input  wire [31:0] src1,
+    input  wire [31:0] src2,
     input  wire        pred_taken,   // 分支预测结果
 
-    output reg         branch_taken, // 是否需要修正
+    output reg         branch_taken, // 是否需要修正（预测错误）
     output reg [31:0]  branch_target // 修正目标地址
 );
 
     reg actual_taken;
     reg [31:0] actual_target;
 
+    // =========================================================
+    // 根据 alu_op 判断条件分支是否成立
+    // =========================================================
+    function automatic branch_condition;
+        input [15:0] alu_op;
+        input [31:0] src1, src2;
+        begin
+            branch_condition = 1'b0;
+            case (1'b1)
+                alu_op[13]: branch_condition = (src1 == src2);          // BEQ
+                alu_op[14]: branch_condition = (src1 != src2);          // BNE
+                default:    branch_condition = 1'b0;
+            endcase
+        end
+    endfunction
+
+    // =========================================================
+    // 主逻辑：确定实际是否跳转 + 目标地址
+    // =========================================================
     always @(*) begin
         // 默认值
         actual_taken  = 1'b0;
-        actual_target = pc + 32'd4;   // 默认下一条指令
+        actual_target = pc + 32'd4;
 
         if (is_branch) begin
             if (is_b || is_bl) begin
@@ -681,21 +747,21 @@ module branch_unit (
             end else if (is_jirl) begin
                 // 间接跳转
                 actual_taken  = 1'b1;
-                actual_target = alu_result + jirl_offs;
+                actual_target = src1 + jirl_offs;
             end else if (is_conditional_branch) begin
-                // 条件跳转（非零视为成立）
-                actual_taken  = (alu_result != 32'b0);
+                // 条件分支：根据 alu_op 与 src1/src2 判断是否成立
+                actual_taken  = branch_condition(alu_op, src1, src2);
                 actual_target = pc + br_offs;
             end
         end
 
-        // 预测 vs 实际
+        // =====================================================
+        // 预测 vs 实际：是否需要修正
+        // =====================================================
         if (actual_taken != pred_taken) begin
-            // 预测错误，需要修正
             branch_taken  = 1'b1;
             branch_target = actual_taken ? actual_target : (pc + 32'd4);
         end else begin
-            // 预测正确，不修正
             branch_taken  = 1'b0;
             branch_target = 32'b0;
         end

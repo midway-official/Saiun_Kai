@@ -1,6 +1,7 @@
 module ISU(
     input wire clk,
     input wire rst, 
+    input wire sys_rst, 
     input wire stall,
     input wire FU1_ready,
      input wire FU2_ready,
@@ -93,10 +94,13 @@ module ISU(
     input wire [31:0] mem2_wdata_i,
 
     // Pipeline 1 Output
+    
     output reg pipe1_valid_o,
     output reg [15:0] pipe1_alu_op_o,
     output reg [31:0] pipe1_src1_data_o,
     output reg [31:0] pipe1_src2_data_o,
+    output reg [3:0] pipe1_src1_o,
+    output reg [3:0] pipe1_src2_o,
     output reg [31:0] pipe1_mem_wdata_o,
     output reg [31:0] pipe1_pc_o,
     output reg pipe1_is_branch_o,
@@ -120,6 +124,8 @@ module ISU(
     output reg [15:0] pipe2_alu_op_o,
     output reg [31:0] pipe2_src1_data_o, 
     output reg [31:0] pipe2_src2_data_o,
+    output reg [3:0] pipe2_src1_o,
+    output reg [3:0] pipe2_src2_o,
     output reg [31:0] pipe2_mem_wdata_o,
     output reg [31:0] pipe2_pc_o,
     output reg pipe2_is_branch_o,
@@ -136,8 +142,27 @@ module ISU(
     output reg [4:0] pipe2_rd_o,
     output reg pipe2_gr_we_o,
     output reg pipe2_mem_we_o,
-    output reg pipe2_res_from_mem_o
+    output reg pipe2_res_from_mem_o,
+    
+    output reg [31:0] ex1_r,
+    output reg [31:0] ex2_r,
+    output reg [31:0] mem1_r,
+    output reg [31:0] mem2_r
 );
+
+always @(posedge clk or posedge sys_rst) begin
+    if (sys_rst) begin
+        ex1_r  <= 32'b0;
+        ex2_r  <= 32'b0;
+        mem1_r <= 32'b0;
+        mem2_r <= 32'b0;
+    end else begin
+        ex1_r  <= ex1_we_i  ? ex1_wdata_i  : ex1_r;   // 仅在写使能时更新
+        ex2_r  <= ex2_we_i  ? ex2_wdata_i  : ex2_r;
+        mem1_r <= mem1_we_i ? mem1_wdata_i : mem1_r;
+        mem2_r <= mem2_we_i ? mem2_wdata_i : mem2_r;
+    end
+end
 
 // 从FIFO或窗口缓存解包出的指令信息
 wire [15:0] fifo_inst1_alu_op;
@@ -571,38 +596,46 @@ always @(*) begin
         pipe2_jirl_offs_o    = 32'b0;
     end
 end
-
-// ----------------- 前递选择优先级宏 -----------------
-function [31:0] forward_mux;
+// ============================================================================
+// 前递来源检测函数：输出来源阶段 (ex2/ex1/mem2/mem1)
+// ============================================================================
+function [3:0] forward_src;
     input [4:0] raddr;
-    input [31:0] rf_data;
-    input ex2_we; input [4:0] ex2_waddr; input [31:0] ex2_wdata;
-    input ex1_we; input [4:0] ex1_waddr; input [31:0] ex1_wdata;
-    input mem2_we; input [4:0] mem2_waddr; input [31:0] mem2_wdata;
-    input mem1_we; input [4:0] mem1_waddr; input [31:0] mem1_wdata;
+    input ex2_we; input [4:0] ex2_waddr;
+    input ex1_we; input [4:0] ex1_waddr;
+    input mem2_we; input [4:0] mem2_waddr;
+    input mem1_we; input [4:0] mem1_waddr;
+
+    reg is_zero;
+    reg ex2_match, ex1_match, mem2_match, mem1_match;
     begin
-        if (raddr == 5'b0)
-            forward_mux = 32'b0;
-        else if (ex2_we && (ex2_waddr == raddr))
-            forward_mux = ex2_wdata;
-        else if (ex1_we && (ex1_waddr == raddr))
-            forward_mux = ex1_wdata;
-        else if (mem2_we && (mem2_waddr == raddr))
-            forward_mux = mem2_wdata;
-        else if (mem1_we && (mem1_waddr == raddr))
-            forward_mux = mem1_wdata;
-        else
-            forward_mux = rf_data;
+        is_zero    = (raddr == 5'b0);
+        ex2_match  = ex2_we  && (ex2_waddr  == raddr);
+        ex1_match  = ex1_we  && (ex1_waddr  == raddr);
+        mem2_match = mem2_we && (mem2_waddr == raddr);
+        mem1_match = mem1_we && (mem1_waddr == raddr);
+
+        // 优先级：ex2 > ex1 > mem2 > mem1
+        forward_src = 4'b0000;
+        if (!is_zero) begin
+            if (ex2_match)       forward_src = 4'b1000;
+            else if (ex1_match)  forward_src = 4'b0100;
+            else if (mem2_match) forward_src = 4'b0010;
+            else if (mem1_match) forward_src = 4'b0001;
+        end
     end
 endfunction
-
 // ----------------- 主组合逻辑 -----------------
 // 增加中间变量，用于计算实际的数据输出
 reg [31:0] pipe1_src1_data_internal;
+reg [3:0] pipe1_src1_internal;
 reg [31:0] pipe1_src2_data_internal;
+reg [3:0] pipe1_src2_internal;
 reg [31:0] pipe1_mem_wdata_internal;
 reg [31:0] pipe2_src1_data_internal;
+reg [3:0] pipe2_src1_internal;
 reg [31:0] pipe2_src2_data_internal;
+reg [3:0] pipe2_src2_internal;
 reg [31:0] pipe2_mem_wdata_internal;
 
 always @(*) begin
@@ -618,94 +651,116 @@ always @(*) begin
         S_IDLE: begin
             // inst1 -> pipe1
             pipe1_src1_data_internal = fifo_inst1_src1_is_pc ? fifo_inst1_pc
-                                : forward_mux(fifo_inst1_rf_raddr1, rf_rdata1,
-                                              ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                              ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                              mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                              mem1_we_i, mem1_waddr_i, mem1_wdata_i);
+                                :rf_rdata1;
 
             pipe1_src2_data_internal = fifo_inst1_src2_is_imm ? fifo_inst1_imm
-                                : forward_mux(fifo_inst1_rf_raddr2, rf_rdata2,
-                                              ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                              ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                              mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                              mem1_we_i, mem1_waddr_i, mem1_wdata_i);
-
-            pipe1_mem_wdata_internal = forward_mux(fifo_inst1_rf_raddr2, rf_rdata2,
-                                            ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                            ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                            mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                            mem1_we_i, mem1_waddr_i, mem1_wdata_i);
-
+                                : rf_rdata2;
+            
+              pipe1_src1_internal = forward_src(
+                    fifo_inst1_rf_raddr1,
+                    ex2_we_i, ex2_waddr_i,
+                    ex1_we_i, ex1_waddr_i,
+                    mem2_we_i, mem2_waddr_i,
+                    mem1_we_i, mem1_waddr_i
+                );
+               
+            pipe1_src2_internal = forward_src(
+                    fifo_inst1_rf_raddr2,
+                    ex2_we_i, ex2_waddr_i,
+                    ex1_we_i, ex1_waddr_i,
+                    mem2_we_i, mem2_waddr_i,
+                    mem1_we_i, mem1_waddr_i
+                );
+                
+            pipe1_mem_wdata_internal = rf_rdata2;
+            
             if (can_dual_issue) begin
                 // inst2 -> pipe2
                 pipe2_src1_data_internal = fifo_inst2_src1_is_pc ? fifo_inst2_pc
-                                    : forward_mux(fifo_inst2_rf_raddr1, rf_rdata3,
-                                                  ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                                  ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                                  mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                                  mem1_we_i, mem1_waddr_i, mem1_wdata_i);
-
+                                    :  rf_rdata3;
+     
                 pipe2_src2_data_internal = fifo_inst2_src2_is_imm ? fifo_inst2_imm
-                                    : forward_mux(fifo_inst2_rf_raddr2, rf_rdata4,
-                                                  ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                                  ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                                  mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                                  mem1_we_i, mem1_waddr_i, mem1_wdata_i);
-
-                pipe2_mem_wdata_internal = forward_mux(fifo_inst2_rf_raddr2, rf_rdata4,
-                                                ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                                ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                                mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                                mem1_we_i, mem1_waddr_i, mem1_wdata_i);
+                                    :  rf_rdata4;
+                pipe2_src1_internal = forward_src(
+                        fifo_inst2_rf_raddr1,
+                        ex2_we_i, ex2_waddr_i,
+                        ex1_we_i, ex1_waddr_i,
+                        mem2_we_i, mem2_waddr_i,
+                        mem1_we_i, mem1_waddr_i
+                    );
+                 pipe2_src2_internal = forward_src(
+                        fifo_inst2_rf_raddr2,
+                        ex2_we_i, ex2_waddr_i,
+                        ex1_we_i, ex1_waddr_i,
+                        mem2_we_i, mem2_waddr_i,
+                        mem1_we_i, mem1_waddr_i
+                    );
+                pipe2_mem_wdata_internal =  rf_rdata4;
             end
         end
 
         S_ISSUE2: begin
             // inst2 -> pipe1
             pipe1_src1_data_internal = fifo_inst2_src1_is_pc ? fifo_inst2_pc
-                                : forward_mux(fifo_inst2_rf_raddr1, rf_rdata1,
-                                              ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                              ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                              mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                              mem1_we_i, mem1_waddr_i, mem1_wdata_i);
+                                : rf_rdata1;
 
             pipe1_src2_data_internal = fifo_inst2_src2_is_imm ? fifo_inst2_imm
-                                : forward_mux(fifo_inst2_rf_raddr2, rf_rdata2,
-                                              ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                              ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                              mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                              mem1_we_i, mem1_waddr_i, mem1_wdata_i);
+                                : rf_rdata2;
+            pipe1_src1_internal = forward_src(
+                    fifo_inst2_rf_raddr1,
+                    ex2_we_i, ex2_waddr_i,
+                    ex1_we_i, ex1_waddr_i,
+                    mem2_we_i, mem2_waddr_i,
+                    mem1_we_i, mem1_waddr_i
+                );
+               pipe1_src2_internal = forward_src(
+                    fifo_inst2_rf_raddr2,
+                    ex2_we_i, ex2_waddr_i,
+                    ex1_we_i, ex1_waddr_i,
+                    mem2_we_i, mem2_waddr_i,
+                    mem1_we_i, mem1_waddr_i
+                );
 
-            pipe1_mem_wdata_internal = forward_mux(fifo_inst2_rf_raddr2, rf_rdata2,
-                                            ex2_we_i, ex2_waddr_i, ex2_wdata_i,
-                                            ex1_we_i, ex1_waddr_i, ex1_wdata_i,
-                                            mem2_we_i, mem2_waddr_i, mem2_wdata_i,
-                                            mem1_we_i, mem1_waddr_i, mem1_wdata_i);
+            pipe1_mem_wdata_internal = rf_rdata2;
         end
     endcase
 end
-
 // 最终数据输出：根据valid信号选择输出数据或全0
 always @(*) begin
+    // ---------------- pipe1 ----------------
     if (pipe1_valid_o) begin
         pipe1_src1_data_o = pipe1_src1_data_internal;
         pipe1_src2_data_o = pipe1_src2_data_internal;
         pipe1_mem_wdata_o = pipe1_mem_wdata_internal;
+
+        // 新增：前递来源标志输出
+        pipe1_src1_o = pipe1_src1_internal;
+        pipe1_src2_o = pipe1_src2_internal;
     end else begin
         pipe1_src1_data_o = 32'b0;
         pipe1_src2_data_o = 32'b0;
         pipe1_mem_wdata_o = 32'b0;
+
+        pipe1_src1_o = 4'b0000;
+        pipe1_src2_o = 4'b0000;
     end
 
+    // ---------------- pipe2 ----------------
     if (pipe2_valid_o) begin
         pipe2_src1_data_o = pipe2_src1_data_internal;
         pipe2_src2_data_o = pipe2_src2_data_internal;
         pipe2_mem_wdata_o = pipe2_mem_wdata_internal;
+
+        // 新增：前递来源标志输出
+        pipe2_src1_o = pipe2_src1_internal;
+        pipe2_src2_o = pipe2_src2_internal;
     end else begin
         pipe2_src1_data_o = 32'b0;
         pipe2_src2_data_o = 32'b0;
         pipe2_mem_wdata_o = 32'b0;
+
+        pipe2_src1_o = 4'b0000;
+        pipe2_src2_o = 4'b0000;
     end
 end
 

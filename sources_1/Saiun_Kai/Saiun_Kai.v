@@ -263,6 +263,8 @@ module Saiun_Kai(
     /* ================== ISU 实例化 ================== */
     
     // ISU输出到执行单元的信号
+    wire [3:0] pipe1_src1, pipe1_src2;
+    wire [3:0] pipe2_src1, pipe2_src2;
     wire        pipe1_valid, pipe2_valid;
     wire [15:0] pipe1_alu_op, pipe2_alu_op;
     wire [31:0] pipe1_src1_data, pipe1_src2_data, pipe1_mem_wdata;
@@ -285,14 +287,21 @@ module Saiun_Kai(
     wire        pipe1_res_from_mem, pipe2_res_from_mem;
      wire pipe1_ready;
      wire pipe2_ready;
+     // 前递相关信号
+    wire [31:0] ex1_r_signal, ex2_r_signal, mem1_r_signal, mem2_r_signal;  // 新增
+    
+
+/* ================== ISU 实例化 ================== */
     ISU u_isu (
         .clk(clk),
-        .rst(isu_reset),                      // 修正：分支跳转时复位ISU
-        .stall(isu_stall),                    // 修正：使用完整的暂停条件
+        .rst(isu_reset),
+        .sys_rst( rst),
+        .stall(isu_stall),
         .iq_is_full(iq_is_full),
         .FU1_ready(pipe1_ready),
         .FU2_ready(pipe2_ready),
         .load_use_hazard(load_use_hazard),
+        
         // 来自IDU的指令输入
         .inst1_alu_op_i(inst1_alu_op),
         .inst1_imm_i(inst1_imm),
@@ -351,7 +360,6 @@ module Saiun_Kai(
         .rf_re3(rf_re3),
         .rf_raddr4(rf_raddr4),
         .rf_re4(rf_re4),
-
         .rf_rdata1(rf_rdata1),
         .rf_rdata2(rf_rdata2),
         .rf_rdata3(rf_rdata3),
@@ -361,24 +369,23 @@ module Saiun_Kai(
         .ex1_we_i(fu1_ex_we),
         .ex1_waddr_i(fu1_ex_addr),
         .ex1_wdata_i(fu1_ex_data),
-
         .mem1_we_i(fu1_mem_we),
         .mem1_waddr_i(fu1_mem_addr),
         .mem1_wdata_i(fu1_mem_data),
-
         .ex2_we_i(fu2_ex_we),
         .ex2_waddr_i(fu2_ex_addr),
         .ex2_wdata_i(fu2_ex_data),
-
         .mem2_we_i(fu2_mem_we),
         .mem2_waddr_i(fu2_mem_addr),
         .mem2_wdata_i(fu2_mem_data),
 
-        // Pipeline 输出
+        // Pipeline 1 输出
         .pipe1_valid_o(pipe1_valid),
         .pipe1_alu_op_o(pipe1_alu_op),
         .pipe1_src1_data_o(pipe1_src1_data),
         .pipe1_src2_data_o(pipe1_src2_data),
+        .pipe1_src1_o(pipe1_src1),          // 新增
+        .pipe1_src2_o(pipe1_src2),          // 新增
         .pipe1_mem_wdata_o(pipe1_mem_wdata),
         .pipe1_pc_o(pipe1_pc),
         .pipe1_is_branch_o(pipe1_is_branch),
@@ -397,10 +404,13 @@ module Saiun_Kai(
         .pipe1_mem_we_o(pipe1_mem_we),
         .pipe1_res_from_mem_o(pipe1_res_from_mem),
 
+        // Pipeline 2 输出
         .pipe2_valid_o(pipe2_valid),
         .pipe2_alu_op_o(pipe2_alu_op),
         .pipe2_src1_data_o(pipe2_src1_data),
         .pipe2_src2_data_o(pipe2_src2_data),
+        .pipe2_src1_o(pipe2_src1),          // 新增
+        .pipe2_src2_o(pipe2_src2),          // 新增
         .pipe2_mem_wdata_o(pipe2_mem_wdata),
         .pipe2_pc_o(pipe2_pc),
         .pipe2_is_branch_o(pipe2_is_branch),
@@ -417,9 +427,14 @@ module Saiun_Kai(
         .pipe2_rd_o(pipe2_rd),
         .pipe2_gr_we_o(pipe2_gr_we),
         .pipe2_mem_we_o(pipe2_mem_we),
-        .pipe2_res_from_mem_o(pipe2_res_from_mem)
+        .pipe2_res_from_mem_o(pipe2_res_from_mem),
+        
+        // 前递ready信号
+        .ex1_r(ex1_r_signal),               // 新增
+        .ex2_r(ex2_r_signal),               // 新增
+        .mem1_r(mem1_r_signal),             // 新增
+        .mem2_r(mem2_r_signal)              // 新增
     );
-
     /* ================== 执行单元1 (支持访存) ================== */
 
     // 流水线控制信号
@@ -428,7 +443,7 @@ module Saiun_Kai(
     wire        is_ex_stall1 = EXTI || fu1_mem_stall||backend_stall;
     wire        is_ex_nop1 = load_use_hazard||branch_taken;
     wire        ex_mem_stall1 = EXTI || fu1_mem_stall||backend_stall;
-    wire        ex_mem_nop1 = 1'b0;
+    wire        ex_mem_nop1 = branch_taken;
     wire        mem_wb_stall1 = EXTI|| fu1_mem_stall||backend_stall;
     wire        mem_wb_nop1 = 1'b0;
     wire [31:0] fu1_mem_addr_out, fu1_mem_wdata_out;
@@ -437,16 +452,19 @@ module Saiun_Kai(
     wire        fu1_sc_success;
     wire [3:0]  fu1_mem_sel_n;
     wire        fu1_mem_we_n;
-    FU u_fu1 (
+ FU u_fu1 (
         .clk(clk),
         .rst(rst),
         .backend_stall(backend_stall),
+        
         // 来自ISU的输入
         .valid_i(pipe1_valid),
         .ready_o(pipe1_ready),
         .alu_op_i(pipe1_alu_op),
         .src1_data_i(pipe1_src1_data),
+        .src1_i(pipe1_src1),                // 新增
         .src2_data_i(pipe1_src2_data),
+        .src2_i(pipe1_src2),                // 新增
         .mem_wdata_i(pipe1_mem_wdata),
         .pc_i(pipe1_pc),
         .is_branch_i(pipe1_is_branch),
@@ -473,11 +491,15 @@ module Saiun_Kai(
         .mem_wb_stall(mem_wb_stall1),
         .mem_wb_nop(mem_wb_nop1),
         
-        // load-use冒险检测
+        // load-use冒险和前递ready信号
         .ex_is_load(fu1_ex_is_load),
         .mem_stall(fu1_mem_stall),
+        .ex1_r(ex1_r_signal),               // 新增
+        .ex2_r(ex2_r_signal),               // 新增
+        .mem1_r(mem1_r_signal),             // 新增
+        .mem2_r(mem2_r_signal),             // 新增
         
-        // 访存接口（连接到MAU）
+        // 访存接口
         .mem_addr(fu1_mem_addr_out),
         .mem_data(fu1_mem_wdata_out),
         .mem_we_n(fu1_mem_we_n),
@@ -506,7 +528,6 @@ module Saiun_Kai(
         .branch_taken_o(branch_taken),
         .branch_target_o(branch_target)
     );
-
     /* ================== 执行单元2 (不支持访存，但可能支持算术load指令) ================== */
     wire        is_ex_stall2 =  is_ex_stall1;
     wire        is_ex_nop2 =is_ex_nop1;
@@ -519,14 +540,22 @@ module Saiun_Kai(
         .clk(clk),
         .rst(rst),
         
-        // 来自ISU的输入（简化版，不支持访存）
-        .valid_i(pipe2_valid), // 过滤掉访存指令
+        // 来自ISU的输入
+        .valid_i(pipe2_valid),
         .ready_o(pipe2_ready),
         .alu_op_i(pipe2_alu_op),
         .src1_data_i(pipe2_src1_data),
+        .src1_i(pipe2_src1),                // 新增
         .src2_data_i(pipe2_src2_data),
+        .src2_i(pipe2_src2),                // 新增
         .dest_i(pipe2_dest),
         .gr_we_i(pipe2_gr_we),
+        
+        // 前递ready信号
+        .ex1_r(ex1_r_signal),               // 新增
+        .ex2_r(ex2_r_signal),               // 新增
+        .mem1_r(mem1_r_signal),             // 新增
+        .mem2_r(mem2_r_signal),             // 新增
         
         // 流水线控制
         .is_ex_stall(is_ex_stall2),
@@ -536,7 +565,6 @@ module Saiun_Kai(
         .mem_wb_stall(mem_wb_stall2),
         .mem_wb_nop(mem_wb_nop2),
         
-        
         // 前递网络
         .ex_dest_o(fu2_ex_addr),
         .ex_gr_we_o(fu2_ex_we),
@@ -544,7 +572,6 @@ module Saiun_Kai(
         .mem_dest_o(fu2_mem_addr),
         .mem_gr_we_o(fu2_mem_we),
         .mem_wdata_o(fu2_mem_data),
-        
         
         // 写回寄存器堆
         .wb_dest_o(wb2_addr),
