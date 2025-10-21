@@ -361,7 +361,7 @@ always @(*) begin
                 // 单发时只发inst1
                 pipe2_valid_o = 1'b0;
                 // 单发不读下一条 第一条预测跳转 读下一条
-                iq_rd_en = fifo_inst1_is_branch&&fifo_inst1_pred_taken;
+                iq_rd_en =   (!iq_empty) && (!stall) &&FU1_ready &&fifo_inst1_is_branch&&fifo_inst1_pred_taken;
             end
         end
 
@@ -657,7 +657,7 @@ always @(*) begin
                                 : rf_rdata2;
             
               pipe1_src1_internal = forward_src(
-                    fifo_inst1_rf_raddr1,
+                    rf_raddr1,
                     ex2_we_i, ex2_waddr_i,
                     ex1_we_i, ex1_waddr_i,
                     mem2_we_i, mem2_waddr_i,
@@ -665,7 +665,7 @@ always @(*) begin
                 );
                
             pipe1_src2_internal = forward_src(
-                    fifo_inst1_rf_raddr2,
+                    rf_raddr2,
                     ex2_we_i, ex2_waddr_i,
                     ex1_we_i, ex1_waddr_i,
                     mem2_we_i, mem2_waddr_i,
@@ -682,14 +682,14 @@ always @(*) begin
                 pipe2_src2_data_internal = fifo_inst2_src2_is_imm ? fifo_inst2_imm
                                     :  rf_rdata4;
                 pipe2_src1_internal = forward_src(
-                        fifo_inst2_rf_raddr1,
+                        rf_raddr3,
                         ex2_we_i, ex2_waddr_i,
                         ex1_we_i, ex1_waddr_i,
                         mem2_we_i, mem2_waddr_i,
                         mem1_we_i, mem1_waddr_i
                     );
                  pipe2_src2_internal = forward_src(
-                        fifo_inst2_rf_raddr2,
+                        rf_raddr4 ,
                         ex2_we_i, ex2_waddr_i,
                         ex1_we_i, ex1_waddr_i,
                         mem2_we_i, mem2_waddr_i,
@@ -707,14 +707,14 @@ always @(*) begin
             pipe1_src2_data_internal = fifo_inst2_src2_is_imm ? fifo_inst2_imm
                                 : rf_rdata2;
             pipe1_src1_internal = forward_src(
-                    fifo_inst2_rf_raddr1,
+                   rf_raddr1,
                     ex2_we_i, ex2_waddr_i,
                     ex1_we_i, ex1_waddr_i,
                     mem2_we_i, mem2_waddr_i,
                     mem1_we_i, mem1_waddr_i
                 );
                pipe1_src2_internal = forward_src(
-                    fifo_inst2_rf_raddr2,
+                    rf_raddr2,
                     ex2_we_i, ex2_waddr_i,
                     ex1_we_i, ex1_waddr_i,
                     mem2_we_i, mem2_waddr_i,

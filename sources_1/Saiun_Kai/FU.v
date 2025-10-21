@@ -232,7 +232,7 @@ branch_unit u_branch (
 );
 assign ex_is_load =is_ex_res_from_mem;
 assign ex_dest_o=is_ex_dest;
-assign ex_gr_we_o=is_ex_gr_we;
+assign ex_gr_we_o=is_ex_gr_we&&!ex_mem_nop;
 assign ex_wdata_o = (is_ex_res_from_mem) ? 32'b0 : 
                     (is_ex_is_jirl    ) ? (is_ex_pc + 32'd4) : 
                                           ex_alu_result;
@@ -261,6 +261,7 @@ mem_ctrl_unit u_mem_ctrl_unit (
 //基本数据寄存器
 reg ex_mem_valid;
 reg [31:0] ex_mem_alu_result;
+reg [31:0] ex_mem_result;
 reg [31:0] ex_mem_pc;          // 程序计数器（用于异常处理等）
 reg [31:0] ex_mem_branch_target;         
 reg ex_mem_branch_taken;         
@@ -286,6 +287,7 @@ always @(posedge clk) begin
         ex_mem_valid <= 1'b0;
         ex_mem_jirl <= 1'b0;
         ex_mem_alu_result <= 32'b0;
+         ex_mem_result <= 32'b0;
         ex_mem_jirl_addr<= 32'b0;
         ex_mem_pc <= 32'b0;
         ex_mem_gr_we <= 1'b0;
@@ -304,6 +306,7 @@ always @(posedge clk) begin
         ex_mem_jirl <= 1'b0;
         ex_mem_jirl_addr<= 32'b0;
         ex_mem_alu_result <= 32'b0;
+        ex_mem_result <= 32'b0;
         ex_mem_pc <= 32'b0;
         ex_mem_gr_we <= 1'b0;
         ex_mem_dest <= 5'b0;
@@ -320,6 +323,7 @@ always @(posedge clk) begin
         ex_mem_jirl <=is_ex_is_jirl  ;
         ex_mem_jirl_addr<= ex_jirl_addr;
         ex_mem_alu_result <= ex_alu_result;
+        ex_mem_result <= ex_wdata_o;
         ex_mem_pc <= is_ex_pc;
         ex_mem_gr_we <= is_ex_gr_we;
         ex_mem_dest <= is_ex_dest;
@@ -616,7 +620,7 @@ end
 // 输出（前递 / 写回）
 // EX 阶段前递：如果指令来自 EX，提供 ALU 结果给前级转发
 assign ex_dest_o   = is_ex_dest;
-assign ex_gr_we_o  = is_ex_gr_we;
+assign ex_gr_we_o  = is_ex_gr_we&&!ex_mem_nop;
 assign ex_wdata_o  = ex_alu_result;
 
 // MEM 阶段前递（来自 EX_MEM 寄存器）
