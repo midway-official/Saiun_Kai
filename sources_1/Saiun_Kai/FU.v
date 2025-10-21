@@ -659,7 +659,7 @@ wire [31:0] nor_result  = ~or_result;
 wire [31:0] sll_result  = src1 << src2[4:0];
 wire [31:0] srl_result  = src1 >> src2[4:0];
 wire [31:0] sra_result  = $signed(src1) >>> src2[4:0];
-wire [31:0] lui_result  = {src2[19:0], 12'b0};
+wire [31:0] lui_result  = src2;
 wire [31:0] mul_result  = src1 * src2;
 
 // 比较结果
