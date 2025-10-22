@@ -276,6 +276,7 @@ module Saiun_Kai(
     wire        pipe1_is_jirl, pipe2_is_jirl;
     wire        pipe1_is_b, pipe2_is_b;
     wire        pipe1_is_bl, pipe2_is_bl;
+    wire        pipe1_src1_pc,pipe2_src1_pc,pipe1_src2_imm,pipe2_src2_imm;
     wire [31:0] pipe1_br_offs, pipe1_jirl_offs;
     wire [31:0] pipe2_br_offs, pipe2_jirl_offs;
     wire [4:0]  pipe1_dest, pipe2_dest;
@@ -386,6 +387,8 @@ module Saiun_Kai(
         .pipe1_src2_data_o(pipe1_src2_data),
         .pipe1_src1_o(pipe1_src1),          // 新增
         .pipe1_src2_o(pipe1_src2),          // 新增
+        .pipe1_src1_pc_o(pipe1_src1_pc),
+        .pipe1_src2_imm_o(pipe1_src2_imm),
         .pipe1_mem_wdata_o(pipe1_mem_wdata),
         .pipe1_pc_o(pipe1_pc),
         .pipe1_is_branch_o(pipe1_is_branch),
@@ -411,6 +414,8 @@ module Saiun_Kai(
         .pipe2_src2_data_o(pipe2_src2_data),
         .pipe2_src1_o(pipe2_src1),          // 新增
         .pipe2_src2_o(pipe2_src2),          // 新增
+        .pipe2_src1_pc_o(pipe2_src1_pc),
+        .pipe2_src2_imm_o(pipe2_src2_imm),
         .pipe2_mem_wdata_o(pipe2_mem_wdata),
         .pipe2_pc_o(pipe2_pc),
         .pipe2_is_branch_o(pipe2_is_branch),
@@ -459,6 +464,8 @@ module Saiun_Kai(
         
         // 来自ISU的输入
         .valid_i(pipe1_valid),
+                . ispc_i(pipe1_src1_pc),
+         .isimm_i(pipe1_src2_imm),
         .ready_o(pipe1_ready),
         .alu_op_i(pipe1_alu_op),
         .src1_data_i(pipe1_src1_data),
@@ -542,6 +549,8 @@ module Saiun_Kai(
         
         // 来自ISU的输入
         .valid_i(pipe2_valid),
+        . ispc_i(pipe2_src1_pc),
+         .isimm_i(pipe2_src2_imm),
         .ready_o(pipe2_ready),
         .alu_op_i(pipe2_alu_op),
         .src1_data_i(pipe2_src1_data),

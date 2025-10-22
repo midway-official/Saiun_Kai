@@ -115,11 +115,13 @@ always @(posedge clk) begin
 
         if (branch_flag_i == `Branch) begin
             pc_reg <= branch_address_i;              // 分支优先级最高
-        end else if (inst1_is_branch && inst1_pred_taken) begin
+        end else if (stall ) begin
+            pc_reg <= pc_reg;                        // stall 冻结
+        end  else if (inst1_is_branch && inst1_pred_taken) begin
             pc_reg <= inst1_pred_target;             // 预测第一条跳转
         end else if (inst2_is_branch && inst2_pred_taken) begin
             pc_reg <= inst2_pred_target;             // 预测第二条跳转
-        end  else if (stall || pc_stall ) begin
+        end  else if ( pc_stall ) begin
             pc_reg <= pc_reg;                        // stall 冻结
         end  else  begin
             pc_reg <= pc_reg + 32'h8;                // 正常取两条
@@ -230,7 +232,7 @@ always @(posedge clk) begin
         if1_inst1_valid <= 1'b0;
         if1_inst2_valid <= 1'b0;
         
-    end else if (branch_flag_i == `Branch|inst1_pred_taken|inst2_pred_taken) begin
+    end else if (branch_flag_i == `Branch) begin
         // 分支跳转，清空IF1
         
         if1_inst1_valid <= 1'b0;
@@ -246,6 +248,14 @@ always @(posedge clk) begin
         if1_inst1_valid <= if1_inst1_valid;
         if1_inst2_valid <= if1_inst2_valid;
         
+    end  else if (inst1_pred_taken|inst2_pred_taken) begin
+        // 分支跳转，清空IF1
+        
+        if1_inst1_valid <= 1'b0;
+        if1_inst2_valid <= 1'b0;
+        if1_pc <= 32'b0;
+        if1_inst1 <= 32'b0;
+        if1_inst2 <= 32'b0;
     end else if (if1_state == IF1_IDLE && icache_hit1 && icache_hit2) begin
         // 两条指令都命中时，更新IF1级寄存器
         if1_pc <= pc_reg;

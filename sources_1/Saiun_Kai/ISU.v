@@ -101,6 +101,8 @@ module ISU(
     output reg [31:0] pipe1_src2_data_o,
     output reg [3:0] pipe1_src1_o,
     output reg [3:0] pipe1_src2_o,
+    output reg pipe1_src1_pc_o,
+    output reg pipe1_src2_imm_o,
     output reg [31:0] pipe1_mem_wdata_o,
     output reg [31:0] pipe1_pc_o,
     output reg pipe1_is_branch_o,
@@ -126,6 +128,8 @@ module ISU(
     output reg [31:0] pipe2_src2_data_o,
     output reg [3:0] pipe2_src1_o,
     output reg [3:0] pipe2_src2_o,
+    output reg pipe2_src1_pc_o,
+    output reg pipe2_src2_imm_o,
     output reg [31:0] pipe2_mem_wdata_o,
     output reg [31:0] pipe2_pc_o,
     output reg pipe2_is_branch_o,
@@ -386,6 +390,8 @@ reg pipe1_gr_we_internal;
 reg pipe1_mem_we_internal;
 reg pipe1_res_from_mem_internal;
 reg [31:0] pipe1_pc_internal;
+ reg pipe1_src1_pc_internal;
+ reg pipe1_src2_imm_internal;
 reg pipe1_is_branch_internal;
 reg pipe1_pred_taken_internal;
 reg pipe1_is_conditional_branch_internal;
@@ -399,7 +405,9 @@ reg [15:0] pipe2_alu_op_internal;
 reg [4:0] pipe2_dest_internal;
 reg [4:0] pipe2_special_internal;
 reg [4:0] pipe2_mem_op_internal;
-reg [4:0] pipe2_rd_internal;
+ reg pipe2_src1_pc_internal; 
+ reg pipe2_src2_imm_internal;
+ reg [4:0] pipe2_rd_internal;
 reg pipe2_gr_we_internal;
 reg pipe2_mem_we_internal;
 reg pipe2_res_from_mem_internal;
@@ -419,6 +427,8 @@ always @(*) begin
     pipe1_dest_internal        = 5'b0;
     pipe1_special_internal     = 5'b0;
     pipe1_mem_op_internal      = 5'b0;
+     pipe1_src1_pc_internal = 1'b0; 
+  pipe1_src2_imm_internal = 1'b0;
     pipe1_rd_internal          = 5'b0;
     pipe1_gr_we_internal       = 1'b0;
     pipe1_mem_we_internal      = 1'b0;
@@ -436,6 +446,8 @@ always @(*) begin
     pipe2_alu_op_internal      = 16'b0;
     pipe2_dest_internal        = 5'b0;
     pipe2_special_internal     = 5'b0;
+        pipe2_src1_pc_internal = 1'b0; 
+  pipe2_src2_imm_internal = 1'b0;
     pipe2_mem_op_internal      = 5'b0;
     pipe2_rd_internal          = 5'b0;
     pipe2_gr_we_internal       = 1'b0;
@@ -458,6 +470,8 @@ always @(*) begin
             pipe1_alu_op_internal  = fifo_inst1_alu_op;
             pipe1_dest_internal    = fifo_inst1_dest;
             pipe1_special_internal = fifo_inst1_special;
+             pipe1_src1_pc_internal =  fifo_inst1_src1_is_pc;      
+              pipe1_src2_imm_internal = fifo_inst1_src2_is_imm ;   
             pipe1_mem_op_internal  = fifo_inst1_mem_op;
             pipe1_rd_internal      = fifo_inst1_rf_raddr2;
             pipe1_gr_we_internal   = fifo_inst1_gr_we;
@@ -478,7 +492,9 @@ always @(*) begin
                 pipe2_alu_op_internal  = fifo_inst2_alu_op;
                 pipe2_dest_internal    = fifo_inst2_dest;
                 pipe2_special_internal = fifo_inst2_special;
-                pipe2_mem_op_internal  = fifo_inst2_mem_op;
+                pipe2_src1_pc_internal =  fifo_inst2_src1_is_pc;   
+                 pipe2_src2_imm_internal = fifo_inst2_src2_is_imm ;
+                 pipe2_mem_op_internal  = fifo_inst2_mem_op;
                 pipe2_rd_internal      = fifo_inst2_rf_raddr2;
                 pipe2_gr_we_internal   = fifo_inst2_gr_we;
                 pipe2_mem_we_internal  = fifo_inst2_mem_we;
@@ -500,6 +516,8 @@ always @(*) begin
             pipe1_alu_op_internal  = fifo_inst2_alu_op;
             pipe1_dest_internal    = fifo_inst2_dest;
             pipe1_special_internal = fifo_inst2_special;
+            pipe1_src1_pc_internal =  fifo_inst2_src1_is_pc;   
+            pipe1_src2_imm_internal = fifo_inst2_src2_is_imm ;
             pipe1_mem_op_internal  = fifo_inst2_mem_op;
             pipe1_rd_internal      = fifo_inst2_rf_raddr2;
             pipe1_gr_we_internal   = fifo_inst2_gr_we;
@@ -524,6 +542,8 @@ always @(*) begin
         pipe1_alu_op_o       = pipe1_alu_op_internal;
         pipe1_dest_o         = pipe1_dest_internal;
         pipe1_special_o      = pipe1_special_internal;
+        pipe1_src1_pc_o       = pipe1_src1_pc_internal;
+        pipe1_src2_imm_o       = pipe1_src2_imm_internal;
         pipe1_mem_op_o       = pipe1_mem_op_internal;
         pipe1_rd_o           = pipe1_rd_internal;
         pipe1_gr_we_o        = pipe1_gr_we_internal;
@@ -545,6 +565,8 @@ always @(*) begin
         pipe1_mem_op_o       = 5'b0;
         pipe1_rd_o           = 5'b0;
         pipe1_gr_we_o        = 1'b0;
+        pipe1_src1_pc_o       = 1'b0;
+        pipe1_src2_imm_o       = 1'b0;
         pipe1_mem_we_o       = 1'b0;
         pipe1_res_from_mem_o = 1'b0;
         pipe1_pc_o           = 32'b0;
@@ -563,6 +585,8 @@ always @(*) begin
         pipe2_dest_o         = pipe2_dest_internal;
         pipe2_special_o      = pipe2_special_internal;
         pipe2_mem_op_o       = pipe2_mem_op_internal;
+        pipe2_src1_pc_o       = pipe2_src1_pc_internal;
+        pipe2_src2_imm_o       = pipe2_src2_imm_internal;
         pipe2_rd_o           = pipe2_rd_internal;
         pipe2_gr_we_o        = pipe2_gr_we_internal;
         pipe2_mem_we_o       = pipe2_mem_we_internal;
@@ -581,6 +605,8 @@ always @(*) begin
         pipe2_dest_o         = 5'b0;
         pipe2_special_o      = 5'b0;
         pipe2_mem_op_o       = 5'b0;
+        pipe2_src1_pc_o       = 1'b0;
+        pipe2_src2_imm_o       = 1'b0;
         pipe2_rd_o           = 5'b0;
         pipe2_gr_we_o        = 1'b0;
         pipe2_mem_we_o       = 1'b0;

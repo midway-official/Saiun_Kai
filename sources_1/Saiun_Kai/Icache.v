@@ -185,7 +185,7 @@ always @(*) begin
                     end
                 end else begin
                     // WAIT1/WAIT2Ä¬ÈÏÂß¼­
-                    next_state    = (state == WAIT1) ? WAIT2 : READ_SRAM;
+                    next_state    = READ_SRAM;
                     stall         = 1'b1;
                     Icache_active = 1'b0;
                 end

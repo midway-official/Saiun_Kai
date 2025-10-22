@@ -5,6 +5,8 @@ module FU (
     // 译码阶段输入信号（去掉pipeline1前缀）
     input wire valid_i,
     output wire ready_o,
+    input wire ispc_i,
+    input wire isimm_i,
     input wire [15:0] alu_op_i,
     input wire [31:0] src1_data_i,
     input wire [3:0] src1_i,
@@ -80,6 +82,8 @@ module FU (
 // IS_EX 流水线寄存器
 // ============================================================================
 reg is_ex_valid;
+reg is_ex_ispc;
+reg is_ex_isimm;
 reg [15:0] is_ex_alu_op;
 reg [31:0] is_ex_src1_data;
 reg [31:0] is_ex_src2_data;
@@ -111,6 +115,8 @@ always @(posedge clk) begin
         is_ex_src2_data <= 32'b0;
         is_ex_src1 <= 4'b0;
         is_ex_src2 <= 4'b0;
+        is_ex_ispc <= 1'b0;
+        is_ex_isimm <= 1'b0;
         is_ex_mem_wdata <= 32'b0;
         is_ex_pc <= 32'b0;
         is_ex_is_branch <= 1'b0;
@@ -136,6 +142,8 @@ always @(posedge clk) begin
         is_ex_src2_data <= 32'b0;
         is_ex_src1 <= 4'b0;
         is_ex_src2 <= 4'b0;
+        is_ex_ispc <= 1'b0;
+        is_ex_isimm <= 1'b0;
         is_ex_mem_wdata <= 32'b0;
         is_ex_pc <= 32'b0;
         is_ex_is_branch <= 1'b0;
@@ -161,6 +169,8 @@ always @(posedge clk) begin
         is_ex_src2_data <= src2_data_i;
         is_ex_src1 <= src1_i;
         is_ex_src2<= src2_i;
+        is_ex_ispc <= ispc_i;
+        is_ex_isimm <= isimm_i;
         is_ex_mem_wdata <= mem_wdata_i;
         is_ex_pc <= pc_i;
         is_ex_is_branch <= is_branch_i;
@@ -189,13 +199,13 @@ wire [31:0] ex_alu_result;
 wire        ex_branch_taken;
 wire [31:0] ex_branch_target;
 wire  [31:0] src1,src2,mem_wdata;
-assign src1 = is_ex_src1[3] ? ex2_r  :
+assign src1 =      is_ex_ispc ?   is_ex_src1_data : is_ex_src1[3] ? ex2_r  :
                is_ex_src1[2] ? ex1_r  :
                is_ex_src1[1] ? mem2_r :
                is_ex_src1[0] ? mem1_r :
                                is_ex_src1_data;
 
-assign src2 = is_ex_src2[3] ? ex2_r  :
+assign src2 = is_ex_isimm ?   is_ex_src2_data : is_ex_src2[3] ? ex2_r  :
                is_ex_src2[2] ? ex1_r  :
                is_ex_src2[1] ? mem2_r :
                is_ex_src2[0] ? mem1_r :
@@ -376,7 +386,7 @@ end
 
 // ** REFACTORED ** State transition and Dcache active logic
 assign mem_state_next = 
-    (mem_state == IDLE)  ? (needs_fsm  ? WAIT1 : IDLE) :
+    (mem_state == IDLE)  ? (needs_fsm  ? DONE : IDLE) :
     //(mem_state == REQ)   ? ... // REQ state is now unreachable
     (mem_state == WAIT1) ? WAIT2 :
     (mem_state == WAIT2) ? WAIT3 :
@@ -466,6 +476,8 @@ module FU_R (
     // 译码阶段输入（简化后）
     input  wire         valid_i,
      output  wire        ready_o,
+     input wire ispc_i,
+    input wire isimm_i,
     input  wire [15:0]  alu_op_i,
     input wire [31:0] src1_data_i,
     input wire [3:0] src1_i,
@@ -514,11 +526,14 @@ reg [31:0]          is_ex_src2_data;
 reg [3:0]          is_ex_src2;
 reg [4:0]           is_ex_dest;
 reg                 is_ex_gr_we;
-
+reg is_ex_ispc;
+reg is_ex_isimm;
 always @(posedge clk) begin
     if (rst) begin
         is_ex_valid      <= 1'b0;
         is_ex_alu_op     <= 16'b0;
+        is_ex_ispc <= 1'b0;
+        is_ex_isimm <= 1'b0;
         is_ex_src1_data  <= 32'b0;
         is_ex_src2_data  <= 32'b0;
         is_ex_src1  <= 4'b0;
@@ -529,6 +544,8 @@ always @(posedge clk) begin
         // nop 优先级高于 stall -- 清空寄存器
         is_ex_valid      <= 1'b0;
         is_ex_alu_op     <= 16'b0;
+        is_ex_ispc <= 1'b0;
+        is_ex_isimm <= 1'b0;
         is_ex_src1_data  <= 32'b0;
         is_ex_src2_data  <= 32'b0;
         is_ex_src1  <= 4'b0;
@@ -539,6 +556,8 @@ always @(posedge clk) begin
         // 正常写入
         is_ex_valid      <= valid_i;
         is_ex_alu_op     <= alu_op_i;
+        is_ex_ispc <= ispc_i;
+        is_ex_isimm <= isimm_i;
         is_ex_src1_data  <= src1_data_i;
         is_ex_src2_data  <= src2_data_i;
         is_ex_src1  <= src1_i;
@@ -553,8 +572,17 @@ end
 // ALU（保持与原来一致的接口）
 wire [31:0] ex_alu_result;
 wire [31:0] src1,src2,mem_wdata; 
-assign src1 = is_ex_src1[3] ? ex2_r : is_ex_src1[2] ? ex1_r : is_ex_src1[1] ? mem2_r : is_ex_src1[0] ? mem1_r : is_ex_src1_data;
-assign src2 = is_ex_src2[3] ? ex2_r : is_ex_src2[2] ? ex1_r : is_ex_src2[1] ? mem2_r : is_ex_src2[0] ? mem1_r : is_ex_src2_data;
+assign src1 =      is_ex_ispc ?   is_ex_src1_data : is_ex_src1[3] ? ex2_r  :
+               is_ex_src1[2] ? ex1_r  :
+               is_ex_src1[1] ? mem2_r :
+               is_ex_src1[0] ? mem1_r :
+                               is_ex_src1_data;
+
+assign src2 = is_ex_isimm ?   is_ex_src2_data : is_ex_src2[3] ? ex2_r  :
+               is_ex_src2[2] ? ex1_r  :
+               is_ex_src2[1] ? mem2_r :
+               is_ex_src2[0] ? mem1_r :
+                               is_ex_src2_data;
 alu_unit u_alu (
     .alu_op(is_ex_alu_op),
     .src1(src1),
